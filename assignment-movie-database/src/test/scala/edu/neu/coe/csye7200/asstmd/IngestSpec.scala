@@ -21,7 +21,7 @@ class IngestSpec extends AnyFlatSpec with Matchers {
     val ingester = new Ingest[Int]()
     val xys = ingester(source).toSeq
     xys.size shouldBe 1
-    xys.head shouldEqual (Success(42))
+    xys.head shouldEqual Success(42)
   }
 
   it should "work for movie database" in {
