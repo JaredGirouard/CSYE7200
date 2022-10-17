@@ -45,7 +45,7 @@ trait RandomState[T] {
     */
   // Hint: This a recursively method and it concatenate current element with following elements.
   // 12 points
-  def toStream: LazyList[T] = LazyList.cons(get, toStream)
+  def toStream: LazyList[T] = LazyList.cons(get, next.toStream)
 }
 
 /**
@@ -95,7 +95,9 @@ object RandomState {
 
   // Hint: This is a easy one, remember that it not only convert a Long to a Double but also scale down the number to -1 ~ 1.
   // 4 points
-  val longToDouble: Long => Double = {x => x.toDouble}
+  val min_x = Long.MinValue.toDouble
+  val max_x = Long.MaxValue.toDouble
+  val longToDouble: Long => Double = {x => ((2 * (x.toDouble - min_x))/(max_x - min_x)) - 1 }
   val doubleToUniformDouble: Double => UniformDouble = { x => UniformDouble((x + 1) / 2) }
 }
 
