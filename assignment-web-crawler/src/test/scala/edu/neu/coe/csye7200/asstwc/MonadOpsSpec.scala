@@ -1,15 +1,19 @@
 package edu.neu.coe.csye7200.asstwc
 
-import java.util.NoSuchElementException
+import java.net.URL
+import java.util.concurrent.TimeoutException
 import org.scalatest.concurrent._
 import org.scalatest.flatspec
 import org.scalatest.matchers.should
+import org.scalatest.tagobjects.Slow
+import scala.collection.mutable
 import scala.concurrent.Future
+import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
 /**
-  * TODO implement me properly
-  */
+ * TODO implement me properly
+ */
 class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Futures with ScalaFutures {
 
   import MonadOps._
@@ -29,9 +33,9 @@ class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Future
 
   behavior of "SequenceForgivingWithLogging"
   it should "work" in {
-    val sb = new StringBuilder
+    val sb = new mutable.StringBuilder
     val xys: Seq[Try[Int]] = Seq(Try(1), Success(2), Failure(WebCrawlerException("dummy")))
-    val xsy: Try[Seq[Int]] = sequenceForgivingWithLogging(xys)(e => sb.append(e.getLocalizedMessage))
+    val xsy: Try[Seq[Int]] = sequenceLaxWithLogging(xys)(e => sb.append(e.getLocalizedMessage))
     xsy should matchPattern { case Success(_) => }
     xsy.get.size shouldBe 2
     sb.toString shouldBe "dummy"
@@ -39,17 +43,25 @@ class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Future
 
   behavior of "SequenceWithLogging"
   it should "work" in {
-    val sb = new StringBuilder
+    val sb = new mutable.StringBuilder
     val xys: Seq[Try[Int]] = Seq(Try(1), Success(2), Failure(WebCrawlerException("dummy1")), Success(3), Failure(WebCrawlerException("dummy2")))
     val xsy: Try[Seq[Int]] = sequenceWithLogging(xys)(e => sb.append(e.getLocalizedMessage))
     xsy should matchPattern { case Failure(WebCrawlerException("dummy1", null)) => }
     sb.toString shouldBe "dummy2"
   }
 
+  behavior of "sequenceLax"
+  it should "work" in {
+    val xys: Seq[Try[Int]] = Seq(Try(1), Success(2), Failure(WebCrawlerException("dummy")))
+    val xsy: Try[Seq[Int]] = sequenceLax(xys)
+    xsy should matchPattern { case Success(_) => }
+    xsy.get.size shouldBe 2
+  }
+
   behavior of "SequenceForgiving"
   it should "work" in {
     val xys: Seq[Try[Int]] = Seq(Try(1), Success(2), Failure(WebCrawlerException("dummy")))
-    val xsy: Try[Seq[Int]] = sequenceForgiving(xys)
+    val xsy: Try[Seq[Int]] = sequenceForgiveSubsequent(xys) { case _: WebCrawlerException => true; case _ => false }
     xsy should matchPattern { case Success(_) => }
     xsy.get.size shouldBe 2
   }
@@ -97,16 +109,17 @@ class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Future
     xy.toEither.isLeft shouldBe true
   }
 
+  behavior of "asEither"
+  it should "work" in {
+    asEither(Success(1)) shouldBe Right(1)
+    asEither(Failure(WebCrawlerException("junk"))) should matchPattern { case Left(WebCrawlerException("junk", null)) => }
+  }
+
   behavior of "Sequence"
 
   it should "work1" in {
     sequence(Seq(Some(1), Some(2))) shouldBe Some(Seq(1, 2))
     sequence(Seq(Some(1), None)) shouldBe None
-  }
-
-  it should "work2" in {
-    sequence(Success(1)) shouldBe Right(1)
-    sequence(Failure(WebCrawlerException("junk"))) should matchPattern { case Left(WebCrawlerException("junk", null)) => }
   }
 
   it should "work3" in {
@@ -122,20 +135,100 @@ class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Future
   }
 
   it should "work5" in {
-    sequence(Right(1)) should matchPattern { case Some(1) => }
-    sequence(Left(WebCrawlerException("junk"))) should matchPattern { case None => }
+    asOption(Right(1)) should matchPattern { case Some(1) => }
+    asOption(Left(WebCrawlerException("junk"))) should matchPattern { case None => }
   }
 
-  behavior of "mapFuture"
-  //  it should "work4" in {
-  //    val xsf: Seq[Future[Either[Throwable, Int]]] = mapFuture(Seq(Future(1), Future(2)))
-  //    whenReady(xsf) { xs => xs should matchPattern { case 1 => } }
-  //  }
+  behavior of "sequence of Iterable"
 
-  //  behavior of "FlattenRecover"
-  //  it should "work" in {
-  //    flatt
-  //  }
+  it should "sequence" in {
+    val try1 = Success(1)
+    val try2 = Success(2)
+    val try3 = Failure(MonadOpsException(""))
+    sequence(Seq(try1, try2)) shouldBe Success(Seq(1, 2))
+    val result: Try[Iterable[Int]] = sequence(Seq(try1, try3))
+    result should matchPattern { case Failure(_) => }
+  }
+
+  it should "sequenceForgivingWith" in {
+    val try2 = Success(1)
+    val try3 = Success(2)
+    val try1 = Failure(MonadOpsException(""))
+    val sb = new mutable.StringBuilder()
+    val handleException: PartialFunction[Throwable, Try[Option[Int]]] = {
+      case NonFatal(x) => sb.append(s"forgiving: $x"); Success(None)
+      case x => Failure(x)
+    }
+    val result: Try[Iterable[Int]] = sequenceForgivingWith(Seq(try1, try2, try3))(handleException)
+    result should matchPattern { case Success(List(1, 2)) => }
+    sb.toString shouldBe "forgiving: edu.neu.coe.csye7200.asstwc.MonadOpsException: "
+  }
+
+  it should "sequenceForgivingTransform" in {
+    val try2 = Success(1)
+    val try3 = Success(2)
+    val try1 = Failure(MonadOpsException(""))
+    val sb = new mutable.StringBuilder()
+    val handleException: PartialFunction[Throwable, Try[Option[Int]]] = {
+      case NonFatal(x) => sb.append(s"forgiving: $x"); Success(None)
+      case x => Failure(x)
+    }
+    val result: Try[Iterable[Int]] = sequenceForgivingTransform(Seq(try1, try2, try3))(x => Success(Some(x + 1)), handleException)
+    result should matchPattern { case Success(List(2, 3)) => }
+    sb.toString shouldBe "forgiving: edu.neu.coe.csye7200.asstwc.MonadOpsException: "
+  }
+  it should "sequenceForgiveSubsequent 0" in {
+    val try2 = Success(1)
+    val try3 = Success(2)
+    val try1 = Failure(MonadOpsException(""))
+    val result: Try[Iterable[Int]] = sequenceForgiving(Seq(try1, try2, try3))
+    result should matchPattern { case Success(List(1, 2)) => }
+  }
+
+  it should "sequenceForgiveSubsequent 1" in {
+    val try1 = Success(1)
+    val try2 = Success(2)
+    val try3 = Failure(MonadOpsException(""))
+    val result: Try[Iterable[Int]] = sequenceForgiving(Seq(try1, try2, try3))
+    result should matchPattern { case Success(List(1, 2)) => }
+  }
+
+  it should "sequenceForgiveSubsequent 2" in {
+    val try1 = Success(1)
+    val try2 = Success(2)
+    val try3 = Failure(new OutOfMemoryError(""))
+    val result: Try[Iterable[Int]] = sequenceForgiving(Seq(try1, try2, try3))
+    result should matchPattern { case Failure(_) => }
+  }
+
+
+  behavior of "sequenceImpatient"
+  val goodURL = "https://www1.coe.neu.edu/~rhillyard/indexSafe.html"
+  val badURL = "https://www1.coe.neu.edu/junk"
+
+  it should "work for 1" in {
+    whenReady(sequenceImpatient(Seq(Future(1)))(100)) {
+      xys => xys shouldBe Seq(Success(1))
+    }
+  }
+  it should "work for 1, goodURL, 1/0 (less patient)" taggedAs Slow in {
+    whenReady(sequenceImpatient(Seq(Future(1), WebCrawler.getURLContent(new URL(goodURL)), Future(1 / 0)))(1)) {
+      xys =>
+        xys.length shouldBe 3
+        xys.head shouldBe Success(1)
+        xys.tail.head should matchPattern { case Failure(x: TimeoutException) => }
+        xys.tail.tail.head should matchPattern { case Failure(x: java.lang.ArithmeticException) => }
+    }
+  }
+  it should "work for 1, goodURL, 1/0 (more patient)" taggedAs Slow in {
+    whenReady(sequenceImpatient(Seq(Future(1), WebCrawler.getURLContent(new URL(goodURL)), Future(1 / 0)))(100)) {
+      xys =>
+        xys.length shouldBe 3
+        xys.head shouldBe Success(1)
+        xys.tail.head should matchPattern { case Success(_) => }
+        xys.tail.tail.head should matchPattern { case Failure(x: java.lang.ArithmeticException) => }
+    }
+  }
 
   behavior of "LiftOption"
   it should "work" in {
@@ -164,7 +257,5 @@ class MonadOpsSpec extends flatspec.AnyFlatSpec with should.Matchers with Future
     val xf: Future[Seq[Int]] = flatten(Seq(Future(Seq(1, 2)), Future(Seq(3, 4))))
     whenReady(xf) { x => x should matchPattern { case Seq(1, 2, 3, 4) => } }
   }
-
-  //  it should "work4" in {}
 
 }
