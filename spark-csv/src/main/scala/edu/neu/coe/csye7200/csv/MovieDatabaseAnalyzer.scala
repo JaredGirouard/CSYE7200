@@ -1,8 +1,9 @@
 package edu.neu.coe.csye7200.csv
 
 import com.phasmidsoftware.table.Table
-import org.apache.spark.sql.{Dataset, SparkSession}
-import scala.util.Try
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import scala.util.{Try}
+import org.apache.spark.sql.functions.{mean, stddev_pop}
 
 
 /**
@@ -12,7 +13,7 @@ case class MovieDatabaseAnalyzer(resource: String) {
 
   val spark: SparkSession = SparkSession
           .builder()
-          .appName("WordCount")
+          .appName("AnalyzeRating")
           .master("local[*]")
           .getOrCreate()
 
@@ -26,21 +27,29 @@ case class MovieDatabaseAnalyzer(resource: String) {
     mt =>
       println(s"Movie table has ${mt.size} rows")
       spark.createDataset(mt.rows.toSeq)
-
   }
 }
 
+case class MovieRatingAnalyzer(path: String)
+{
+  val spark: SparkSession = SparkSession
+    .builder()
+    .appName("MovieRatingAnalyzer")
+    .master("local[*]")
+    .getOrCreate()
 
-/**
- * @author scalaprof
- */
-object MovieDatabaseAnalyzer extends App {
+  spark.sparkContext.setLogLevel("ERROR") // We want to ignore all of the INFO and WARN messages.
 
-  def apply(resource: String): MovieDatabaseAnalyzer = new MovieDatabaseAnalyzer(resource)
+  val df = spark.read.option("header", "true").csv(path)
+  val processedDF = scoreProcessor(df)
+  processedDF.show()
 
-  apply("/movie_metadata.csv").dy foreach {
-    d =>
-      println(d.count())
-      d.show(10)
+  def scoreProcessor(df: DataFrame): DataFrame = {
+    df.select(mean("imdb_score").alias("mean"), stddev_pop("imdb_score").alias("stddev"))
   }
+}
+
+object MovieDatabaseAnalyzer extends App {
+  val path = getClass.getResource("/movie_metadata.csv").getPath
+  MovieRatingAnalyzer(path)
 }
